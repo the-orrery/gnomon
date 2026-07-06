@@ -26,7 +26,7 @@ typer = ["typer>=0.12"]
 [dependency-groups]
 # ruff/pyrefly 按需运行, 不进 dev-deps, 让 .venv 保持纯 Python。
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.1.1",
     "pytest-cov",
     "pytest-mock",
     "pytest-randomly",
