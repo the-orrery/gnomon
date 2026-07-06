@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://cubic.dev/schema/cubic-repository-config.schema.json
+
+version: 1
+reviews:
+  enabled: true
+  sensitivity: medium
+  incremental_commits: true
+  check_drafts: false
+  architecture_diagrams: false
+  external_contributors_require_manual_review: false
+  resolve_threads_when_addressed: true
+  auto_approve_behavior: disabled
+  auto_approve: disabled
+  auto_ultrareview: disabled
+  custom_instructions: |
+    Review gnomon as a public Python library for local CLI telemetry. Use README.md and docs/architecture.md as the source of truth. Prioritize SQLite migration safety, best-effort failure behavior, public API compatibility, tests, documentation drift, and supply-chain hardening. Do not request changes for style-only points already covered by ruff.
+  ignore:
+    files:
+      - uv.lock
+      - dist/**
+      - build/**
+      - "*.egg-info/**"
+      - "**/__pycache__/**"
+    pr_labels:
+      - skip-review
+      - no-ai-review
+    max_changed_lines: 3000
+  custom_rules:
+    - name: Telemetry must stay best-effort
+      description: If record, connect, run_instrumented, or stats changes, verify telemetry failures still do not change caller exit behavior except where explicitly documented.
+    - name: Public API and docs stay in sync
+      description: If exported symbols, config semantics, schema behavior, or visible stats output changes, verify README.md and docs/architecture.md are updated in the same PR.
+    - name: Workflow supply-chain hardening
+      description: In GitHub Actions changes, flag broad token permissions, unpinned action references, credential persistence, or pull_request workflows that can expose secrets.
+
+pr_descriptions:
+  generate: true

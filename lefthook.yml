@@ -1,0 +1,8 @@
+pre-commit:
+  commands:
+    ruff-check:
+      run: uvx ruff@0.15.16 check {staged_files}
+      glob: "*.py"
+    ruff-format:
+      run: uvx ruff@0.15.16 format --check {staged_files}
+      glob: "*.py"

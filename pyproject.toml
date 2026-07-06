@@ -1,0 +1,64 @@
+[build-system]
+# uv_build: 纯 Python 甜区。命中 C/Rust 扩展 / build hook / VCS 动态版本 /
+# 隐式 namespace 包(无 __init__.py) 任一 → 换 hatchling。
+requires = ["uv_build>=0.11.21,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "gnomon"
+version = "0.3.0"
+description = "Shared per-invocation SQLite telemetry core for local CLI tools"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Eridanus" }]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# run_instrumented (in-process Typer/Click capture) needs typer; tools that only
+# call record() from a subprocess runner don't, so it's optional.
+typer = ["typer>=0.12"]
+
+[dependency-groups]
+# ruff/pyrefly 按需运行, 不进 dev-deps, 让 .venv 保持纯 Python。
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "pytest-mock",
+    "pytest-randomly",
+    "poethepoet",
+    "typer>=0.12",
+]
+
+[tool.poe.tasks]
+lint = "uvx ruff@0.15.16 check ."
+fmt = "uvx ruff@0.15.16 format ."
+fmt-check = "uvx ruff@0.15.16 format --check ."
+typecheck = "uv run --with pyrefly==1.0.0 pyrefly check"
+test = "pytest"
+check = { sequence = ["lint", "fmt-check", "typecheck", "test"], help = "lint + format-check + typecheck + test" }
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+# S603/S607: detect_caller/_ancestor_commands use subprocess.run with a
+# controlled list — intentional, not a shell-injection risk.
+extend-ignore = ["S603", "S607"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"tests/**" = ["S101", "PLR2004"]
+
+[tool.ruff.lint.flake8-bugbear]
+# typer 的 x = typer.Option(...) 默认值是惯用法, 不是 B008 真问题
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
