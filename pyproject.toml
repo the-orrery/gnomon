@@ -21,7 +21,7 @@ dependencies = []
 [project.optional-dependencies]
 # run_instrumented (in-process Typer/Click capture) needs typer; tools that only
 # call record() from a subprocess runner don't, so it's optional.
-typer = ["typer>=0.12"]
+typer = ["typer>=0.26.8"]
 
 [dependency-groups]
 # ruff/pyrefly 按需运行, 不进 dev-deps, 让 .venv 保持纯 Python。
@@ -31,7 +31,7 @@ dev = [
     "pytest-mock",
     "pytest-randomly",
     "poethepoet",
-    "typer>=0.12",
+    "typer>=0.26.8",
 ]
 
 [tool.poe.tasks]
