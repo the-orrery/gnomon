@@ -13,7 +13,7 @@ reviews:
   auto_approve: disabled
   auto_ultrareview: disabled
   custom_instructions: |
-    Review gnomon as a public Python library for local CLI telemetry. Use README.md and docs/architecture.md as the source of truth. Prioritize SQLite migration safety, best-effort failure behavior, public API compatibility, tests, documentation drift, and supply-chain hardening. Do not request changes for style-only points already covered by ruff.
+    Review as a local-first Python CLI tool in the orrery workspace. Use AGENTS.md and README.md as the source of truth when available. Prioritize correctness, data safety, CLI compatibility, and tests. Do not request changes for style-only points already covered by ruff.
   ignore:
     files:
       - uv.lock
@@ -26,10 +26,8 @@ reviews:
       - no-ai-review
     max_changed_lines: 3000
   custom_rules:
-    - name: Telemetry must stay best-effort
-      description: If record, connect, run_instrumented, or stats changes, verify telemetry failures still do not change caller exit behavior except where explicitly documented.
-    - name: Public API and docs stay in sync
-      description: If exported symbols, config semantics, schema behavior, or visible stats output changes, verify README.md and docs/architecture.md are updated in the same PR.
+    - name: CLI behavior and docs stay in sync
+      description: If a command, flag, default, output contract, or visible error changes, verify that README.md and the relevant docs are updated in the same PR.
     - name: Workflow supply-chain hardening
       description: In GitHub Actions changes, flag broad token permissions, unpinned action references, credential persistence, or pull_request workflows that can expose secrets.
 
