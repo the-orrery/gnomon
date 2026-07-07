@@ -198,7 +198,7 @@ def test_migration_adds_missing_version_column(tmp_path):
     """connect() adds 'version' col when a schema has all base cols but lacks version."""
     db = tmp_path / "partial.db"
     conn = sqlite3.connect(str(db))
-    # Full base schema from an older tool ledger, but without version.
+    # Full base schema but without version
     conn.executescript("""
         CREATE TABLE calls (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -310,7 +310,7 @@ def test_detect_caller_term_program():
 
 def test_record_context(tmp_path):
     db = tmp_path / "t.db"
-    ctx = {"feature": "search", "surface": "cli", "mode": "dry-run"}
+    ctx = {"app": "demo", "unit": "cli", "env": "test"}
     record({"command_path": ["deploy"], "context": ctx}, CFG, path=db)
     conn = connect(db)
     (raw,) = conn.execute("SELECT context FROM calls").fetchone()

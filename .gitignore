@@ -12,6 +12,8 @@ htmlcov/
 .codegraph/
 .env
 .repo-release-gate.local.toml
+AGENTS.md
+CLAUDE.md
 .docket-release-gate.local.toml
 *.db
 *.sqlite
