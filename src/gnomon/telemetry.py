@@ -1,13 +1,13 @@
 """Per-invocation telemetry: capture each CLI run into a local SQLite ledger and
 expose `stats` for per-command count / p50·p95 duration / error-rate.
 
-Shared core for local CLI tools. Each tool passes a `Cfg(tool=...)`, so the same
-machinery writes to that tool's own ledger
+Shared core for the-orrery tools. Each tool passes a `Cfg(tool=...)`, so the same
+machinery writes to that tool's own ledger (`~/.local/share/<tool>/telemetry.db`)
 under that tool's env switches — while the `calls` schema stays IDENTICAL across
 tools, so their ledgers can be ATTACH-ed + UNION-ed for cross-tool analysis.
 
 Local-only, no network — usage observability to drive the tool's own improvement
-(which commands run, how long, what fails), not external analytics.
+(which commands run, how long, what fails), not product analytics.
 
 Best-effort throughout: telemetry must never fail the command or change its exit
 code — every write path swallows its own errors.
@@ -44,7 +44,7 @@ _FAULT_EXIT = 2
 # percentile at/above this means "the max" — nearest-rank degenerates to the last.
 _MAX_PCTILE = 100
 
-# Public agent runtime env vars — not internal identifiers, safe in a public package.
+# Public agent-product env vars — not internal identifiers, safe in a public package.
 _AGENT_ENV_KEYS = (
     "AI_AGENT",
     "CLAUDECODE",
@@ -64,7 +64,7 @@ class Cfg:
     tool        tool name (kebab/snake) → ledger dir + stats heading.
     version     the tool's own __version__, stamped into each row by run_instrumented.
     env_prefix  prefix for the db-path override + opt-out env vars; defaults to
-                tool upper-cased ("demo-tool" → DEMO_TOOL_TELEMETRY_DB).
+                tool upper-cased ("crux" → CRUX_TELEMETRY_DB / CRUX_TELEMETRY_OFF).
     """
 
     tool: str
@@ -78,7 +78,7 @@ class Cfg:
 
 def db_path(cfg: Cfg) -> Path:
     """Resolve the ledger path: $<PREFIX>_TELEMETRY_DB override,
-    else the XDG data directory under <tool>/telemetry.db."""
+    else ($XDG_DATA_HOME or ~/.local/share)/<tool>/telemetry.db."""
     override = os.environ.get(f"{cfg.prefix}_TELEMETRY_DB")
     if override:
         return Path(override)
@@ -217,7 +217,7 @@ def _ancestor_commands(limit: int = 8) -> list[str]:
 def detect_caller(env: dict[str, str] | None = None) -> str:
     """Classify the CLI caller as 'agent' or 'human'.
 
-    Checks agent runtime env vars, TERM_PROGRAM, and (when env=None) ancestor
+    Checks agent-product env vars, TERM_PROGRAM, and (when env=None) ancestor
     process names. Passing a custom `env` dict suppresses the live process scan
     so callers can test in isolation."""
     source = os.environ if env is None else env
@@ -236,17 +236,17 @@ def detect_caller(env: dict[str, str] | None = None) -> str:
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     """If the table has 'verb' but not 'command_path', migrate in-place.
 
-    Only adds columns that are genuinely absent — some existing tool schemas may
-    already have caller/context columns, so we must not
+    Only adds columns that are genuinely absent — some tools
+    already have caller/context columns in their private schema, so we must not
     blindly ADD them again (duplicate column name would abort the migration
     before the UPDATE that backfills command_path).
 
     Also ensures all v2 columns that _COLUMNS expects are present, since tools
-    with older schemas may be missing columns like 'version'."""
+    with private schemas may be missing columns like 'version'."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(calls)").fetchall()}
     if "verb" not in cols or "command_path" in cols:
         # If command_path already exists, ensure any remaining v2 columns are present
-        # (handles partial migrations or tool-specific schemas with extra columns).
+        # (handles partial migrations or private schemas with extra columns).
         _ensure_v2_columns(conn, cols)
         return
     conn.execute("ALTER TABLE calls ADD COLUMN command_path TEXT NOT NULL DEFAULT '[]'")
@@ -304,7 +304,7 @@ def record(rec: dict, cfg: Cfg, *, path: Path | None = None) -> None:
     rec may contain:
       command_path  list[str] — subcommand hierarchy, e.g. ["deploy", "pipeline", "run"]
       caller        str — "agent" or "human"; auto-detected if absent
-      context       dict — arbitrary tool-owned data; core treats it as opaque JSON
+      context       dict — arbitrary tool-private data; core treats it as opaque JSON
     """
     if _disabled(cfg):
         return
@@ -372,7 +372,7 @@ def run_instrumented(  # noqa: PLR0913 — public capture entry: cfg + keyword-o
 
     command_path: explicit subcommand hierarchy. When absent, derived from the
     leading non-flag tokens of argv (e.g. ["deploy", "pipeline"] from
-    ["deploy", "pipeline", "--flag", "value"]).
+    ["deploy", "pipeline", "--env", "prod"]).
 
     Requires the `typer` extra (in-process capture is a no-op for tools that
     can't be wrapped — those call `record` directly instead)."""
@@ -488,7 +488,7 @@ def stats(cfg: Cfg, *, path: Path | None = None) -> str:
     and is itself best-effort: a missing/unreadable ledger yields a human note,
     never a traceback.
 
-    Tool-specific sections are NOT added here —
+    Tool-specific sections (e.g. crux's recall-query mix) are NOT added here —
     a repo composes them at its own CLI layer: `print(stats(cfg)); print(my_section())`.
 
     Note: the ledger grows unbounded (one row per call). It's local and cheap to

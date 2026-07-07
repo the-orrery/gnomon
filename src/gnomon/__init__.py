@@ -1,4 +1,4 @@
-"""gnomon — shared per-invocation SQLite telemetry core for local CLI tools.
+"""gnomon — shared per-invocation SQLite telemetry core for the-orrery tools.
 
 A tool passes its identity once via `Cfg(tool=..., version=...)`; the same core
 writes to that tool's own ledger under a shared, identical `calls` schema (so
