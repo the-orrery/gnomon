@@ -6,7 +6,7 @@ build-backend = "uv_build"
 
 [project]
 name = "gnomon"
-version = "0.3.0"
+version = "0.3.1"
 description = "Shared per-invocation SQLite telemetry core for local CLI tools"
 readme = "README.md"
 requires-python = ">=3.12"

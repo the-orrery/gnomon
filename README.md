@@ -1,5 +1,13 @@
 # gnomon
 
+## Distribution
+
+`gnomon` is a library, not a CLI, so releases publish a platform-independent
+wheel, source distribution, and `SHA256SUMS` instead of a fake executable.
+Artifacts are available from [GitHub Releases](https://github.com/the-orrery/gnomon/releases).
+Pull requests build and install the wheel in an isolated environment; a matching
+`v<project.version>` tag publishes immutable assets.
+
 Shared per-invocation telemetry for local CLI tools. `gnomon` writes one row per
 CLI run into a local SQLite ledger, then exposes small helper APIs for stats and
 tool-specific analysis.
