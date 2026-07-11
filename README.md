@@ -18,15 +18,27 @@ network, and telemetry failures must never change the caller's exit code.
 ## Usage
 
 ```python
-from gnomon import Cfg, record, stats
+from gnomon import Cfg, record, record_event, stats
 
 cfg = Cfg(tool="demo", version="1.0.0")
 record({"command_path": ["build"], "exit_code": 0, "duration_ms": 42}, cfg)
+record_event(
+    {
+        "event_type": "attempt.finished",
+        "command_id": "demo.build",
+        "exit_code": 0,
+        "result_class": "success.transport",
+    },
+    cfg,
+)
 print(stats(cfg))
 ```
 
 Typer/Click CLIs can use `run_instrumented` for in-process stdout/stderr capture.
 Tools that spawn subprocesses can call `record` after they measure a run.
+`record_event` writes the versioned attempt/task contract beside the legacy
+`calls` table. A CLI records attempts only; task outcomes belong to the caller
+that owns task semantics.
 
 ## Development
 

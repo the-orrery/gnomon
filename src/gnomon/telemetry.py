@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from gnomon.event_schema import ensure_event_schema
+
 # stderr is small + high-value (errors/warnings) so sample generously; stdout can
 # be huge so keep only a head sample (full size lives in out_bytes).
 STDOUT_CAP = 2048
@@ -156,6 +158,7 @@ CREATE TABLE IF NOT EXISTS calls (
 
 # Applied after migration so the index always references a column that exists.
 _SCHEMA_INDEX = "CREATE INDEX IF NOT EXISTS calls_command_path ON calls(command_path);"
+_CONNECT_ATTEMPTS = 5
 
 _COLUMNS = (
     "ts",
@@ -282,19 +285,31 @@ def connect(path: Path) -> sqlite3.Connection:
     Automatically migrates v1 ledgers (verb column) to v2 (command_path/caller/context)
     on first open, preserving all historical rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=5.0, isolation_level=None)
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.executescript(_SCHEMA_TABLE)
-        _migrate_v1_to_v2(conn)
-        conn.execute(_SCHEMA_INDEX)
-        conn.execute("PRAGMA user_version=2")
-    except Exception:
-        conn.close()
-        raise
-    return conn
+    for attempt in range(_CONNECT_ATTEMPTS):
+        conn = sqlite3.connect(str(path), timeout=5.0, isolation_level=None)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            current_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+            if current_mode.lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.executescript(_SCHEMA_TABLE)
+            _migrate_v1_to_v2(conn)
+            conn.execute(_SCHEMA_INDEX)
+            ensure_event_schema(conn)
+            conn.execute("PRAGMA user_version=2")
+        except sqlite3.OperationalError as exc:
+            conn.close()
+            contended = "locked" in str(exc).lower() or "busy" in str(exc).lower()
+            if not contended or attempt == _CONNECT_ATTEMPTS - 1:
+                raise
+            time.sleep(0.01 * (attempt + 1))
+        except Exception:
+            conn.close()
+            raise
+        else:
+            return conn
+    raise RuntimeError("unreachable")
 
 
 def record(rec: dict, cfg: Cfg, *, path: Path | None = None) -> None:
@@ -318,8 +333,8 @@ def record(rec: dict, cfg: Cfg, *, path: Path | None = None) -> None:
                 command_path = json.dumps([str(cp)] if cp else [], ensure_ascii=False)
             caller = str(rec["caller"]) if "caller" in rec else detect_caller()
             values = (
-                str(rec.get("ts", "")),
-                int(rec.get("pid", 0)),
+                str(rec.get("ts") or _now_iso()),
+                int(rec.get("pid") or os.getpid()),
                 command_path,
                 json.dumps(rec.get("args", []), ensure_ascii=False),
                 int(rec.get("exit_code", 0)),
@@ -329,7 +344,7 @@ def record(rec: dict, cfg: Cfg, *, path: Path | None = None) -> None:
                 str(rec.get("stderr", "")),
                 str(rec.get("err", "")),
                 str(rec.get("cwd", "")),
-                str(rec.get("version", "")),
+                str(rec.get("version") or cfg.version),
                 1 if rec.get("is_tty") else 0,
                 1 if rec.get("is_ci") else 0,
                 caller,
