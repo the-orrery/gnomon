@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from gnomon.event_schema import ensure_event_schema
+
 # stderr is small + high-value (errors/warnings) so sample generously; stdout can
 # be huge so keep only a head sample (full size lives in out_bytes).
 STDOUT_CAP = 2048
@@ -294,8 +296,6 @@ def connect(path: Path) -> sqlite3.Connection:
             conn.executescript(_SCHEMA_TABLE)
             _migrate_v1_to_v2(conn)
             conn.execute(_SCHEMA_INDEX)
-            from gnomon.events import ensure_event_schema
-
             ensure_event_schema(conn)
             conn.execute("PRAGMA user_version=2")
         except sqlite3.OperationalError as exc:
