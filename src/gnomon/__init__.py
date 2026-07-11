@@ -7,6 +7,7 @@ in-process `run_instrumented` wrapper, or a direct `record` for tools that can't
 be wrapped. Tool-specific analysis stays in the tool, reading via `connect`/`db_path`.
 """
 
+from gnomon.events import EVENT_SCHEMA_VERSION, read_events, record_event
 from gnomon.telemetry import (
     Cfg,
     connect,
@@ -16,19 +17,18 @@ from gnomon.telemetry import (
     run_instrumented,
     stats,
 )
-from gnomon.events import EVENT_SCHEMA_VERSION, read_events, record_event
 
 __version__ = "0.4.0"
 
 __all__ = [
-    "Cfg",
     "EVENT_SCHEMA_VERSION",
+    "Cfg",
     "connect",
     "db_path",
     "detect_caller",
+    "read_events",
     "record",
     "record_event",
-    "read_events",
     "run_instrumented",
     "stats",
 ]

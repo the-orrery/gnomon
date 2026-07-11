@@ -7,13 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from gnomon import (
-    Cfg,
     EVENT_SCHEMA_VERSION,
+    Cfg,
     connect,
     db_path,
     detect_caller,
-    record,
     read_events,
+    record,
     record_event,
     run_instrumented,
     stats,

@@ -10,7 +10,6 @@ from typing import Any
 
 from gnomon.telemetry import Cfg
 
-
 EVENT_SCHEMA_VERSION = "gnomon.event/v2"
 EVENT_TYPES = {"attempt.finished", "task.finished"}
 CAPTURE_STATUSES = {"complete", "python-tee", "not-captured", "unknown"}
@@ -31,6 +30,11 @@ _ATTEMPT_ONLY_FIELDS = {
     "capture_status",
 }
 _TASK_ONLY_FIELDS = {"task_outcome", "task_outcome_source"}
+
+
+class _InvalidEvent(ValueError):
+    pass
+
 
 _EVENTS_V2_TABLE = """
 CREATE TABLE IF NOT EXISTS events_v2 (
@@ -141,7 +145,7 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("event integer fields must be non-negative integers")
+        raise _InvalidEvent
     return value
 
 
@@ -152,14 +156,16 @@ def _optional_bool(value: Any) -> int | None:
         return 1 if value else 0
     if isinstance(value, int) and value in (0, 1):
         return value
-    raise ValueError("event boolean fields must be bool or 0/1")
+    raise _InvalidEvent
 
 
 def _has_value(event: dict[str, Any], field: str) -> bool:
     return field in event and event[field] is not None
 
 
-def _normalized_event(event: dict[str, Any], cfg: Cfg) -> dict[str, Any] | None:
+def _normalized_event(  # noqa: C901, PLR0911 - explicit rejection paths mirror the event contract
+    event: dict[str, Any], cfg: Cfg
+) -> dict[str, Any] | None:
     from gnomon.telemetry import _now_iso, detect_caller
 
     event_type = _optional_text(event.get("event_type"))

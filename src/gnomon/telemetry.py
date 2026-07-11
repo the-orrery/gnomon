@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS calls (
 
 # Applied after migration so the index always references a column that exists.
 _SCHEMA_INDEX = "CREATE INDEX IF NOT EXISTS calls_command_path ON calls(command_path);"
+_CONNECT_ATTEMPTS = 5
 
 _COLUMNS = (
     "ts",
@@ -282,7 +283,7 @@ def connect(path: Path) -> sqlite3.Connection:
     Automatically migrates v1 ledgers (verb column) to v2 (command_path/caller/context)
     on first open, preserving all historical rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    for attempt in range(5):
+    for attempt in range(_CONNECT_ATTEMPTS):
         conn = sqlite3.connect(str(path), timeout=5.0, isolation_level=None)
         try:
             conn.execute("PRAGMA busy_timeout=5000")
@@ -297,16 +298,17 @@ def connect(path: Path) -> sqlite3.Connection:
 
             ensure_event_schema(conn)
             conn.execute("PRAGMA user_version=2")
-            return conn
         except sqlite3.OperationalError as exc:
             conn.close()
             contended = "locked" in str(exc).lower() or "busy" in str(exc).lower()
-            if not contended or attempt == 4:
+            if not contended or attempt == _CONNECT_ATTEMPTS - 1:
                 raise
             time.sleep(0.01 * (attempt + 1))
         except Exception:
             conn.close()
             raise
+        else:
+            return conn
     raise RuntimeError("unreachable")
 
 
