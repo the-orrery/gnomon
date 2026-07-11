@@ -1,6 +1,6 @@
 ---
-description: "gnomon 架构总览：项目定位、模块 codemap、核心不变量、关键路径和开发入口。"
-keywords: [gnomon, architecture, codemap, telemetry, sqlite]
+description: "gnomon 架构总览：项目定位、模块 codemap、事件契约、关键路径和开发入口。"
+keywords: [gnomon, architecture, codemap, telemetry, events, sqlite]
 kind: reference
 ---
 
@@ -11,20 +11,22 @@ kind: reference
 
 ## 1. 鸟瞰
 
-`gnomon` 是本地 CLI 工具可复用的**共享 per-invocation 遥测核心库**。每次工具调用写入一条 SQLite 行，供工具自身的用量统计与改进驱动（p50/p95 延迟、错误率、命令分布）。
+`gnomon` 是本地 CLI 工具可复用的**共享遥测核心库**。它同时维护兼容旧消费者的调用账本和版本化事件表，供工具统计、跨工具任务关联与 Agent 工作面回放使用。
 
 核心特性：
 - **工具零耦合**：调用方传入 `Cfg(tool=...)` 即获得独立账本；核心对业务完全无知，`context` 字段是不透明的 per-tool JSON。
 - **跨工具 union 分析**：所有账本共享同一 `calls` schema（v2），可通过 `ATTACH` + `UNION` 做跨工具序列挖掘。
+- **attempt 与 task 分离**：CLI 只能记录调用事实；只有拥有任务语义的上层调用方才能声明任务结果。
 - **本地-only、best-effort**：无网络、无副作用，任何写路径异常均被吞噬，不影响工具 exit code。
 
 ## 2. 模块地图
 
 | 模块 | 路径 | 职责 |
 |---|---|---|
-| 包入口 | `src/gnomon/__init__.py` | 版本声明；re-export 公开 API（`Cfg`/`connect`/`db_path`/`detect_caller`/`record`/`run_instrumented`/`stats`）。 |
+| 包入口 | `src/gnomon/__init__.py` | 版本声明；re-export 调用账本与事件公开 API。 |
 | 遥测核心 | `src/gnomon/telemetry.py` | 全部运行时逻辑：schema 定义、连接管理、v1→v2 迁移、两种 capture posture、stats 生成、caller 检测。 |
-| 测试 | `tests/` | pytest 单元测试，覆盖迁移、record、stats、detect_caller。 |
+| 事件核心 | `src/gnomon/events.py` | `events_v2` schema、事件校验、best-effort 写入与读取。 |
+| 测试 | `tests/` | pytest 单元测试，覆盖迁移、record、event、stats、detect_caller。 |
 | 工程配置 | `pyproject.toml` | 依赖（typer 为可选 extra）、poe tasks、ruff、pytest、coverage 配置。 |
 
 > `config.py` / `logging_setup.py` 是 seed 模板骨架遗留，当前版本**未使用**；核心配置通过 `Cfg` dataclass 和环境变量直接管理。
@@ -32,6 +34,8 @@ kind: reference
 ## 3. 核心不变量
 
 - **`calls` schema 跨工具必须相同**：所有消费仓的账本必须满足 v2 schema（`command_path`/`caller`/`context` 等列存在），才能 ATTACH + UNION。破坏此约定导致跨工具分析失效。
+- **`events_v2` 与 `calls` 独立演进**：事件表不能借旧表字段默认值伪造事实；未知版本、task ID、字节数和耗时必须保留为 `NULL`。
+- **退出码不是任务结果**：`attempt.finished` 可记录 exit code 和结果分类，但不得据此自动生成 `task.finished`。任务事件必须由上层显式提供 `task_id`、`task_outcome` 和来源。
 - **best-effort 不可逆**：`record` / `run_instrumented` 的所有异常路径均被 `except Exception: return` 吞噬。任何会向调用方抛出的改动都是 breaking change。
 - **telemetry 不能改 exit code**：工具的 exit code 由工具自身决定；遥测层观察但不干预。
 - **`context` 字段对核心不透明**：核心只做 `json.dumps`，不解析、不校验 key。业务数据留在各工具自己的 context schema，不硬编码进此库。
@@ -96,11 +100,23 @@ def run() -> None:
 
 `telemetry.stats` — 返回文本格式的 per-command 统计（count / p50·p95·max 延迟 / 错误数）及最近 10 条 fault。`_pctile` 用最近邻秩法。fault 定义：`err` 非空 OR `exit_code >= 2`（exit 1 无 err = 工具主动找到问题，不计 fault）。工具可在其 CLI 层组合追加自定义 section：`print(stats(cfg)); print(my_section())`。
 
+### `record_event(event, cfg, *, path=None)`
+
+`events.record_event` — 写入一个 `gnomon.event/v2` 事件。`attempt.finished` 必须提供稳定 `command_id`；`task.finished` 必须由上层显式提供 `task_id` 和 `task_outcome`。无效事件不落库，也不会向调用方抛错。
+
+版本身份拆为 producer、adapter、upstream 三层；`invoked_as` 只保存公开命令路径或兼容别名。事件只记录输出字节数和捕获状态，不保存 stdout/stderr 正文。完整字段语义见 [任务与调用事件契约 V2](event-schema-v2.md)。
+
+### `read_events(cfg=..., path=None)`
+
+`events.read_events` — 按写入顺序读取本地事件并解码 `invoked_as`、`context`、`meta` JSON。账本不存在或不可读时返回空列表，主要用于工具自身统计和离线分析。
+
 ### `Tee`
 
 `telemetry.Tee` — 透传 wrapper，劫持 `sys.stdout` / `sys.stderr`：写透到真实流，同时计量总字节（`Tee#total`）并保留首 `cap` 字节采样（`Tee#sample`）。遥测自身的任何计量异常被 `except Exception: pass` 吞噬，不进入写路径。
 
-## 5. Schema v2
+## 5. 存储契约
+
+### 5.1 兼容调用账本
 
 `calls` 表，所有工具账本共用同一 schema，可 ATTACH + UNION 跨工具分析。
 
@@ -129,6 +145,15 @@ def run() -> None:
 
 **v1→v2 迁移**（`telemetry._migrate_v1_to_v2`）：检测到 `verb` 列存在且 `command_path` 缺失时，就地 ALTER ADD 缺失列 + `UPDATE calls SET command_path = json_array(verb)`。幂等；部分迁移账本（已有 `caller`/`context`）通过 `_ensure_v2_columns` 安全补全。
 
+### 5.2 版本化事件
+
+`events_v2` 与 `calls` 共用同一 SQLite 文件，但不从旧表反推事实。当前支持：
+
+- `attempt.finished`：一次命令调用结束，可关联 `task_id`，但不声明任务完成。
+- `task.finished`：上层任务结束，必须包含显式 outcome。
+
+事件表以 `event_id` 唯一标识事件，以 `attempt_id` 关联一次调用，以 `task_id` 串联多次调用。schema 与隐私边界由 [任务与调用事件契约 V2](event-schema-v2.md)定义。
+
 ## 6. 两种采用 posture
 
 | posture | 适用场景 | 入口 |
@@ -143,12 +168,13 @@ def run() -> None:
 | 想改 / 加什么 | 从这里入手 | 备注 |
 |---|---|---|
 | 新增 `calls` 列 / 改 schema | `telemetry._SCHEMA_TABLE` + `_COLUMNS` + `_migrate_v1_to_v2` / `_ensure_v2_columns` | 必须幂等；不破坏跨工具 union 能力 |
+| 新增事件字段 / 改事件约束 | `events._EVENTS_V2_TABLE` + `_EVENT_COLUMNS` + `_normalized_event` | 先改事件契约；未知值保持 `NULL`，不得从退出码推断任务结果 |
 | 改 caller 检测逻辑 | `telemetry.detect_caller` + `_AGENT_ENV_KEYS` + `_ancestor_commands` | 注意 `env=None` vs 自定义 env 的分支 |
 | 改统计输出格式 | `telemetry.stats` + `_cp_display` + `_pctile` + `_is_fault` | stats 返回文本，工具自行 print |
 | 改 stdout/stderr 采样上限 | `telemetry.STDOUT_CAP` / `STDERR_CAP` | 改大会增大账本体积 |
 | 改账本路径解析 | `telemetry.db_path` | 影响 `<PREFIX>_TELEMETRY_DB` 覆盖逻辑 |
 | 加/改 in-process capture 行为 | `telemetry.run_instrumented` + `Tee` | 需要 `typer` extra；改 Tee 注意不能向写路径抛 |
-| 工具集成（新消费方） | 新仓 `pyproject.toml` 依赖 + 建 `Cfg` 实例 + 选 posture | 见 §6；typer extra 只在用 `run_instrumented` 时需要 |
+| 工具集成（新消费方） | 新仓 `pyproject.toml` 依赖 + 建 `Cfg` 实例 + 选 posture；需要任务关联时再调用 `record_event` | 见 §6；typer extra 只在用 `run_instrumented` 时需要 |
 | 改工程检查 | `pyproject.toml` poe tasks | `uv run poe check` 为质量门 |
 | 补文档 | `docs/` | architecture.md = 当前真相；ADR = 取舍；spec = 约束 |
 

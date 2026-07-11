@@ -6,6 +6,8 @@ kind: index
 
 # gnomon docs
 
+- [任务与调用事件契约 V2](event-schema-v2.md)：`attempt.finished`、`task.finished`、NULL 与输出捕获语义。
+
 这里放 `gnomon` 的长期文档。源码、测试、配置、lockfile 和运行态数据是工件，不直接作为文档；需要被长期查阅的知识应写成本目录下的 reference、spec、decision 或 runbook。
 
 当前入口：

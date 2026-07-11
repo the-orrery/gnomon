@@ -16,15 +16,19 @@ from gnomon.telemetry import (
     run_instrumented,
     stats,
 )
+from gnomon.events import EVENT_SCHEMA_VERSION, read_events, record_event
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 __all__ = [
     "Cfg",
+    "EVENT_SCHEMA_VERSION",
     "connect",
     "db_path",
     "detect_caller",
     "record",
+    "record_event",
+    "read_events",
     "run_instrumented",
     "stats",
 ]

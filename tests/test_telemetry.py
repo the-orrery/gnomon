@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from gnomon import (
     Cfg,
+    EVENT_SCHEMA_VERSION,
     connect,
     db_path,
     detect_caller,
     record,
+    read_events,
+    record_event,
     run_instrumented,
     stats,
 )
@@ -45,6 +49,205 @@ def test_record_and_read_back(tmp_path):
     rows = conn.execute("SELECT command_path, exit_code, version FROM calls").fetchall()
     conn.close()
     assert rows == [('["foo"]', 0, "9")]
+
+
+def test_record_defaults_timestamp_pid_and_cfg_version(tmp_path):
+    db = tmp_path / "defaults.db"
+    record({"command_path": ["foo"]}, CFG, path=db)
+    conn = connect(db)
+    ts, pid, version = conn.execute("SELECT ts, pid, version FROM calls").fetchone()
+    conn.close()
+    assert ts
+    assert pid > 0
+    assert version == "1.2.3"
+
+
+def test_record_attempt_event_preserves_nulls_and_structured_fields(tmp_path):
+    db = tmp_path / "events.db"
+    event_id = record_event(
+        {
+            "event_type": "attempt.finished",
+            "task_id": "task-1",
+            "command_id": "demo.build",
+            "invoked_as": ["legacy-build"],
+            "exit_code": 0,
+            "result_class": "success.transport",
+            "stdout_bytes": 12,
+            "stderr_bytes": 0,
+            "capture_status": "complete",
+            "context": {"env": "test"},
+        },
+        CFG,
+        path=db,
+    )
+    assert event_id
+
+    events = read_events(cfg=CFG, path=db)
+    assert len(events) == 1
+    event = events[0]
+    assert event["schema_version"] == EVENT_SCHEMA_VERSION
+    assert event["attempt_id"] == event_id
+    assert event["producer_name"] == "demo"
+    assert event["producer_version"] == "1.2.3"
+    assert event["upstream_version"] is None
+    assert event["invoked_as"] == ["legacy-build"]
+    assert event["context"] == {"env": "test"}
+
+
+def test_task_event_requires_explicit_outcome(tmp_path):
+    db = tmp_path / "events.db"
+    assert (
+        record_event({"event_type": "task.finished", "task_id": "task-1"}, CFG, path=db)
+        is None
+    )
+    assert not db.exists()
+    assert (
+        record_event(
+            {
+                "event_type": "task.finished",
+                "task_id": "task-1",
+                "task_outcome": "completed",
+            },
+            CFG,
+            path=db,
+        )
+        is None
+    )
+
+    event_id = record_event(
+        {
+            "event_type": "task.finished",
+            "task_id": "task-1",
+            "task_outcome": "completed",
+            "task_outcome_source": "caller",
+        },
+        CFG,
+        path=db,
+    )
+    assert event_id
+    event = read_events(cfg=CFG, path=db)[0]
+    assert event["task_outcome"] == "completed"
+    assert event["exit_code"] is None
+
+
+def test_event_types_reject_fields_owned_by_the_other_type(tmp_path):
+    db = tmp_path / "events.db"
+    assert (
+        record_event(
+            {
+                "event_type": "attempt.finished",
+                "command_id": "demo.build",
+                "task_outcome": "completed",
+            },
+            CFG,
+            path=db,
+        )
+        is None
+    )
+    assert (
+        record_event(
+            {
+                "event_type": "task.finished",
+                "task_id": "task-1",
+                "task_outcome": "completed",
+                "task_outcome_source": "caller",
+                "exit_code": 0,
+            },
+            CFG,
+            path=db,
+        )
+        is None
+    )
+    assert not db.exists()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("stdout_bytes", -1),
+        ("duration_ms", 1.5),
+        ("is_ci", "false"),
+        ("capture_status", "perfect"),
+    ],
+)
+def test_attempt_event_rejects_invalid_scalar_facts(tmp_path, field, value):
+    db = tmp_path / "events.db"
+    event = {"event_type": "attempt.finished", "command_id": "demo.build"}
+    event[field] = value
+    assert record_event(event, CFG, path=db) is None
+    assert not db.exists()
+
+
+def test_complete_capture_requires_both_byte_counts(tmp_path):
+    db = tmp_path / "events.db"
+    assert (
+        record_event(
+            {
+                "event_type": "attempt.finished",
+                "command_id": "demo.build",
+                "capture_status": "complete",
+            },
+            CFG,
+            path=db,
+        )
+        is None
+    )
+    assert not db.exists()
+
+
+def test_invalid_attempt_event_is_not_written(tmp_path):
+    db = tmp_path / "events.db"
+    assert record_event({"event_type": "attempt.finished"}, CFG, path=db) is None
+    assert not db.exists()
+
+
+def test_event_opt_out_skips_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEMO_TELEMETRY_OFF", "1")
+    db = tmp_path / "events.db"
+    assert (
+        record_event(
+            {"event_type": "attempt.finished", "command_id": "demo.build"},
+            CFG,
+            path=db,
+        )
+        is None
+    )
+    assert not db.exists()
+
+
+def test_event_write_failure_is_best_effort(tmp_path, monkeypatch):
+    def fail_connect(_path):
+        raise sqlite3.OperationalError("locked")
+
+    monkeypatch.setattr("gnomon.telemetry.connect", fail_connect)
+    assert (
+        record_event(
+            {"event_type": "attempt.finished", "command_id": "demo.build"},
+            CFG,
+            path=tmp_path / "events.db",
+        )
+        is None
+    )
+
+
+def test_concurrent_event_writes_share_one_initialized_schema(tmp_path):
+    db = tmp_path / "events.db"
+
+    def write(index: int) -> str | None:
+        return record_event(
+            {
+                "event_type": "attempt.finished",
+                "command_id": "demo.build",
+                "attempt_id": f"attempt-{index}",
+            },
+            CFG,
+            path=db,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        ids = list(pool.map(write, range(24)))
+    assert all(ids)
+    assert len(read_events(cfg=CFG, path=db)) == 24
 
 
 def test_opt_out_skips_write(tmp_path, monkeypatch):
